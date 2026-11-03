@@ -1,0 +1,13 @@
+웹판에 그대로 넣어 둔 외부 파일 (빌드 없이 쓰려고 원본을 복사함)
+
+chart.umd.js                     Chart.js 4.4.1 (MIT) — 서버판 static/vendor와 같은 파일
+ort/                             onnxruntime-web 1.31.1 (MIT, Microsoft) — dist/의 wasm 전용 빌드 3개
+                                 https://www.npmjs.com/package/onnxruntime-web
+ppu-paddle-ocr/                  ppu-paddle-ocr 6.6.1 (LICENSE 참고) — web 빌드가 쓰는 모듈만
+ppu-ocv/                         ppu-ocv 4.0.0 (LICENSE 참고) — canvas-web 빌드가 쓰는 모듈만
+                                 https://github.com/PT-Perkasa-Pilar-Utama/ppu-paddle-ocr
+models/                          PaddleOCR PP-OCRv5 모델의 ONNX 변환본 (Apache-2.0, PaddlePaddle)
+  PP-OCRv5_mobile_det_infer.onnx         글자 위치 찾기
+  korean_PP-OCRv5_mobile_rec_infer.onnx  한국어 글자 인식
+  ppocrv5_korean_dict.txt                인식 글자 사전
+                                 https://huggingface.co/snowfluke/ppu-paddle-ocr-models

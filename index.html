@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>가계부</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-xklbx4tmJAiQoZZK/awusOfGLxvbMOipAC96ixdR9sM='; connect-src 'self' https://api.github.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": {
+  "onnxruntime-web": "./vendor/ort/ort.wasm.min.mjs",
+  "ppu-paddle-ocr/web": "./vendor/ppu-paddle-ocr/web/index.js",
+  "ppu-ocv/canvas-web": "./vendor/ppu-ocv/index.canvas-web.js"
+} }
+</script>
+</head>
+<body>
+
+<div id="login" class="login" hidden>
+  <form id="login-form" class="card">
+    <h1>가계부</h1>
+    <label>데이터 저장소
+      <input type="text" id="login-repo" value="whiang/money_tracker_data" autocapitalize="off" spellcheck="false" required>
+    </label>
+    <label>GitHub 토큰
+      <input type="password" id="login-token" autocomplete="current-password" required>
+    </label>
+    <p class="hint">위 저장소 하나에 <b>Contents 읽기·쓰기</b> 권한만 준 fine-grained 토큰을 넣으세요.
+      토큰은 이 기기 브라우저에만 저장됩니다.</p>
+    <button type="submit" class="primary">로그인</button>
+    <p class="error" id="login-error"></p>
+  </form>
+</div>
+
+<main id="app" hidden>
+
+  <!-- 입력 -->
+  <section id="tab-input" class="tab">
+    <header class="tab-head"><h2 id="input-title">거래 입력</h2></header>
+    <form id="tx-form" class="card form" autocomplete="off">
+      <div class="segment" role="radiogroup" aria-label="구분">
+        <label><input type="radio" name="type" value="지출" checked><span>지출</span></label>
+        <label><input type="radio" name="type" value="수입"><span>수입</span></label>
+        <label><input type="radio" name="type" value="이체"><span>이체</span></label>
+      </div>
+      <label>금액
+        <div class="amount-wrap">
+          <input type="text" id="tx-amount" inputmode="numeric" placeholder="0" required>
+          <span>원</span>
+        </div>
+      </label>
+      <label id="tx-category-label">카테고리
+        <select id="tx-category"></select>
+      </label>
+      <p class="hint budget-hint" id="tx-budget-hint" hidden></p>
+      <label><span id="tx-account-caption">계좌</span>
+        <select id="tx-account" required></select>
+      </label>
+      <label id="tx-to-label" hidden>입금 계좌
+        <select id="tx-to-account"></select>
+      </label>
+      <label>날짜
+        <input type="date" id="tx-date" required>
+      </label>
+      <label>메모
+        <input type="text" id="tx-memo" maxlength="200">
+      </label>
+      <div class="buttons">
+        <button type="submit" class="primary" id="tx-submit">저장</button>
+        <button type="button" id="tx-cancel" hidden>취소</button>
+        <button type="button" id="tx-delete" class="danger" hidden>삭제</button>
+      </div>
+    </form>
+
+    <!-- 사진으로 입력 (은행 앱 거래내역 캡처) -->
+    <details class="card" id="img-card">
+      <summary>사진으로 입력 (은행 앱 캡처)</summary>
+      <div class="form">
+        <label>계좌 <select id="img-account"></select></label>
+        <label>거래내역 캡처 (여러 장 가능)
+          <input type="file" id="img-files" accept="image/*" multiple>
+        </label>
+        <button type="button" id="img-analyze" class="primary">분석</button>
+        <p class="hint" id="img-status">사진은 이 기기 안에서만 읽고 어디에도 보내지 않습니다.
+          처음 한 번 글자 인식 파일(약 33MB)을 받습니다.</p>
+      </div>
+      <div id="img-rows"></div>
+      <div class="buttons" id="img-actions" hidden>
+        <button type="button" class="primary" id="img-save">저장</button>
+        <button type="button" id="img-clear">취소</button>
+      </div>
+    </details>
+
+    <!-- 예산 현황 (내역과 같은 달) -->
+    <details class="card" id="input-budget-card" open>
+      <summary id="input-budget-title">예산 현황</summary>
+      <div id="input-budgets"></div>
+    </details>
+
+    <!-- 내역 -->
+    <header class="tab-head month-nav" data-month-key="listMonth">
+      <button type="button" class="nav-prev" aria-label="이전 달">‹</button>
+      <h2 class="month-label"></h2>
+      <button type="button" class="nav-next" aria-label="다음 달">›</button>
+    </header>
+    <div class="filters">
+      <select id="list-account" aria-label="계좌 필터"></select>
+      <select id="list-category" aria-label="카테고리 필터"></select>
+    </div>
+    <div class="totals" id="list-totals"></div>
+    <div id="list-body"></div>
+  </section>
+
+  <!-- 요약 -->
+  <section id="tab-summary" class="tab" hidden>
+    <header class="tab-head month-nav" data-month-key="summaryMonth">
+      <button type="button" class="nav-prev" aria-label="이전 달">‹</button>
+      <h2 class="month-label"></h2>
+      <button type="button" class="nav-next" aria-label="다음 달">›</button>
+    </header>
+    <div class="stats">
+      <div class="stat"><span>수입</span><strong id="sum-income"></strong></div>
+      <div class="stat"><span>지출</span><strong id="sum-expense"></strong></div>
+      <div class="stat"><span>순액</span><strong id="sum-net"></strong></div>
+    </div>
+    <div class="card">
+      <h3>예산 대비 지출</h3>
+      <div id="sum-budgets"></div>
+    </div>
+    <div class="card">
+      <h3>카테고리별 지출</h3>
+      <div class="donut-wrap"><canvas id="chart-donut" aria-label="카테고리별 지출 도넛 차트"></canvas></div>
+      <ul class="legend" id="donut-legend"></ul>
+    </div>
+    <div class="card">
+      <h3>최근 12개월 수입·지출</h3>
+      <div class="trend-wrap"><canvas id="chart-trend" aria-label="최근 12개월 수입 지출 막대 차트"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>계좌별 잔액 <small id="sum-balance-note"></small></h3>
+      <table class="balances" id="sum-accounts"></table>
+    </div>
+  </section>
+
+  <!-- 설정 -->
+  <section id="tab-settings" class="tab" hidden>
+    <header class="tab-head"><h2>설정</h2></header>
+
+    <details class="card" open>
+      <summary>계좌</summary>
+      <ul class="rows" id="acc-list"></ul>
+      <form id="acc-form" class="form inline-form">
+        <input type="hidden" id="acc-id">
+        <input type="text" id="acc-name" placeholder="이름" required maxlength="50">
+        <select id="acc-kind"><option>계좌</option><option>카드</option><option>현금</option></select>
+        <input type="text" id="acc-opening" inputmode="numeric" placeholder="시작 잔액">
+        <div class="buttons">
+          <button type="submit" class="primary" id="acc-submit">추가</button>
+          <button type="button" id="acc-cancel" hidden>취소</button>
+        </div>
+      </form>
+    </details>
+
+    <details class="card">
+      <summary>카테고리</summary>
+      <ul class="rows" id="cat-list"></ul>
+      <form id="cat-form" class="form inline-form">
+        <input type="hidden" id="cat-id">
+        <input type="text" id="cat-name" placeholder="이름" required maxlength="50">
+        <select id="cat-type"><option>지출</option><option>수입</option></select>
+        <div class="buttons">
+          <button type="submit" class="primary" id="cat-submit">추가</button>
+          <button type="button" id="cat-cancel" hidden>취소</button>
+        </div>
+      </form>
+    </details>
+
+    <details class="card">
+      <summary>예산</summary>
+      <div class="month-nav small" data-month-key="budgetMonth">
+        <button type="button" class="nav-prev" aria-label="이전 달">‹</button>
+        <strong class="month-label"></strong>
+        <button type="button" class="nav-next" aria-label="다음 달">›</button>
+      </div>
+      <form id="budget-form" class="form">
+        <ul class="rows" id="budget-list"></ul>
+        <p class="hint" id="budget-total"></p>
+        <div class="buttons">
+          <button type="submit" class="primary">예산 저장</button>
+          <button type="button" id="budget-copy">지난달 예산 복사</button>
+        </div>
+      </form>
+    </details>
+
+    <details class="card">
+      <summary>CSV 가져오기</summary>
+      <form id="import-form" class="form">
+        <label>파일 <input type="file" id="imp-file" accept=".csv,text/csv"></label>
+        <div class="grid2">
+          <label>인코딩
+            <select id="imp-encoding"><option value="utf-8">UTF-8</option><option value="euc-kr">EUC-KR (CP949)</option></select>
+          </label>
+          <label>건너뛸 앞줄 수
+            <input type="number" id="imp-skip" min="0" value="0">
+          </label>
+        </div>
+        <label>가져올 계좌 <select id="imp-account"></select></label>
+        <div id="imp-mapping" hidden>
+          <p class="hint">열 매핑</p>
+          <label>날짜 열 <select data-map="date"></select></label>
+          <div class="segment small">
+            <label><input type="radio" name="imp-mode" value="split" checked><span>출금·입금 열</span></label>
+            <label><input type="radio" name="imp-mode" value="single"><span>금액 열 하나(음수=지출)</span></label>
+          </div>
+          <div id="imp-split" class="grid2">
+            <label>출금 열 <select data-map="withdraw"></select></label>
+            <label>입금 열 <select data-map="deposit"></select></label>
+          </div>
+          <label id="imp-single" hidden>금액 열 <select data-map="amount"></select></label>
+          <fieldset><legend>메모 열 (여러 개 선택 가능)</legend><div id="imp-memo" class="checks"></div></fieldset>
+          <div class="grid2">
+            <label>구분 열 (선택) <select data-map="type"></select></label>
+            <label>카테고리 열 (선택) <select data-map="category"></select></label>
+          </div>
+          <div class="preview" id="imp-preview"></div>
+          <button type="submit" class="primary">가져오기</button>
+        </div>
+        <p id="imp-result" class="hint"></p>
+      </form>
+    </details>
+
+    <details class="card" id="data-card">
+      <summary>데이터·백업</summary>
+      <div class="form">
+        <p class="hint" id="data-info"></p>
+        <div class="buttons">
+          <button type="button" id="export-csv">거래 CSV 받기</button>
+          <button type="button" id="export-json">전체 백업(JSON) 받기</button>
+        </div>
+        <p class="hint">CSV는 엑셀에서 바로 열 수 있습니다. 변경 이력은 GitHub 저장소의 커밋 기록에도 남습니다.</p>
+        <button type="button" id="ocr-prepare">사진 인식 파일 미리 받기</button>
+        <p class="hint" id="ocr-info"></p>
+      </div>
+    </details>
+
+    <div class="card">
+      <button type="button" id="logout" class="danger">이 기기에서 로그아웃 (토큰 지우기)</button>
+    </div>
+  </section>
+</main>
+
+<nav class="tabbar" id="tabbar" hidden>
+  <button type="button" data-tab="input" class="active">입력·내역</button>
+  <button type="button" data-tab="summary">요약</button>
+  <button type="button" data-tab="settings">설정</button>
+</nav>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="vendor/chart.umd.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
